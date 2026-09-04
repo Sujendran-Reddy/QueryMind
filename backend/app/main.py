@@ -1,18 +1,28 @@
 from contextlib import asynccontextmanager
+from pathlib import Path
+from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
 from app.database import (
+    collection_exists,
     create_collection,
+    create_document,
     get_collections,
+    get_documents,
     initialise_database,
 )
+from app.documents import SUPPORTED_EXTENSIONS, extract_document
+
+
+UPLOAD_DIRECTORY = Path("uploads")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     initialise_database()
+    UPLOAD_DIRECTORY.mkdir(parents=True, exist_ok=True)
     yield
 
 
@@ -46,9 +56,53 @@ def add_collection(collection: CollectionCreate):
     name = collection.name.strip()
 
     if not name:
-        raise HTTPException(
-            status_code=400,
-            detail="Collection name cannot be empty",
-        )
+        raise HTTPException(400, "Collection name cannot be empty")
 
     return create_collection(name)
+
+
+@app.get("/collections/{collection_id}/documents")
+def list_documents(collection_id: str):
+    if not collection_exists(collection_id):
+        raise HTTPException(404, "Collection not found")
+
+    return get_documents(collection_id)
+
+
+@app.post("/collections/{collection_id}/documents", status_code=201)
+async def upload_document(
+    collection_id: str,
+    file: UploadFile = File(...),
+):
+    if not collection_exists(collection_id):
+        raise HTTPException(404, "Collection not found")
+
+    original_name = file.filename or "document"
+    extension = Path(original_name).suffix.lower()
+
+    if extension not in SUPPORTED_EXTENSIONS:
+        raise HTTPException(
+            415,
+            "Supported formats are PDF, DOCX, TXT, and Markdown",
+        )
+
+    stored_path = UPLOAD_DIRECTORY / f"{uuid4()}{extension}"
+    stored_path.write_bytes(await file.read())
+
+    try:
+        pages = extract_document(stored_path)
+        character_count = sum(len(page.text) for page in pages)
+
+        if character_count == 0:
+            raise ValueError("Document contains no extractable text")
+
+        return create_document(
+            collection_id=collection_id,
+            name=original_name,
+            page_count=len(pages),
+            character_count=character_count,
+        )
+
+    except Exception as error:
+        stored_path.unlink(missing_ok=True)
+        raise HTTPException(422, str(error)) from error
