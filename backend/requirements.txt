@@ -8,3 +8,4 @@ pypdf
 python-docx
 pytest
 httpx
+sentence-transformers

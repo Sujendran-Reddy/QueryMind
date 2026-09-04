@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 from pathlib import Path
 from uuid import uuid4
+from app.vector_store import get_vector_store
 from app.chunking import chunk_document
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
@@ -104,6 +105,14 @@ async def upload_document(
             page_count=len(pages),
             character_count=character_count,
         )
+        
+        vector_store = get_vector_store()
+        vector_store.index_chunks(
+            collection_id=collection_id,
+            document_id=document["id"],
+            document_name=original_name,
+            chunks=chunks,
+            )
 
         return {
             **document,
