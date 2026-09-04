@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 from pathlib import Path
 from uuid import uuid4
+from app.chunking import chunk_document
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
@@ -91,17 +92,23 @@ async def upload_document(
 
     try:
         pages = extract_document(stored_path)
+        chunks = chunk_document(pages)
         character_count = sum(len(page.text) for page in pages)
 
         if character_count == 0:
             raise ValueError("Document contains no extractable text")
 
-        return create_document(
+        document = create_document(
             collection_id=collection_id,
             name=original_name,
             page_count=len(pages),
             character_count=character_count,
         )
+
+        return {
+            **document,
+            "chunk_count": len(chunks),
+        }
 
     except Exception as error:
         stored_path.unlink(missing_ok=True)
