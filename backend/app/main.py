@@ -6,6 +6,7 @@ import httpx
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+from app.evaluation import EvaluationQuestion, evaluate_retrieval
 
 from app.chunking import chunk_document
 from app.database import (
@@ -62,6 +63,10 @@ class ChatRequest(BaseModel):
     question: str = Field(min_length=1, max_length=1000)
     top_k: int = Field(default=5, ge=1, le=20)
 
+class EvaluationRequest(BaseModel):
+    collection_id: str
+    top_k: int = Field(default=5, ge=1, le=20)
+    questions: list[dict]
 
 @app.get("/health")
 def health_check():
@@ -192,3 +197,23 @@ def chat_with_documents(request: ChatRequest):
         "sources": sources,
         "model": "qwen2.5:1.5b",
     }
+
+@app.post("/evaluation/retrieval")
+def run_retrieval_evaluation(request: EvaluationRequest):
+    if not collection_exists(request.collection_id):
+        raise HTTPException(404, "Collection not found")
+
+    questions = [
+        EvaluationQuestion(
+            question=item["question"],
+            expected_document=item["expected_document"],
+            expected_page=item.get("expected_page"),
+        )
+        for item in request.questions
+    ]
+
+    return evaluate_retrieval(
+        collection_id=request.collection_id,
+        questions=questions,
+        top_k=request.top_k,
+    )
