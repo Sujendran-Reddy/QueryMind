@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from uuid import uuid4
 
+import httpx
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
@@ -15,6 +16,7 @@ from app.database import (
     initialise_database,
 )
 from app.documents import SUPPORTED_EXTENSIONS, extract_document
+from app.rag import generate_answer
 from app.vector_store import get_vector_store
 
 
@@ -41,6 +43,12 @@ class CollectionCreate(BaseModel):
 
 
 class SearchRequest(BaseModel):
+    collection_id: str
+    question: str = Field(min_length=1, max_length=1000)
+    top_k: int = Field(default=5, ge=1, le=20)
+
+
+class ChatRequest(BaseModel):
     collection_id: str
     question: str = Field(min_length=1, max_length=1000)
     top_k: int = Field(default=5, ge=1, le=20)
@@ -144,4 +152,34 @@ def search_documents(request: SearchRequest):
         "question": request.question,
         "results": results,
         "result_count": len(results),
+    }
+
+
+@app.post("/chat")
+def chat_with_documents(request: ChatRequest):
+    if not collection_exists(request.collection_id):
+        raise HTTPException(404, "Collection not found")
+
+    sources = get_vector_store().search(
+        collection_id=request.collection_id,
+        question=request.question,
+        top_k=request.top_k,
+    )
+
+    try:
+        answer = generate_answer(
+            question=request.question,
+            retrieved_chunks=sources,
+        )
+    except httpx.HTTPError as error:
+        raise HTTPException(
+            503,
+            "Ollama is unavailable. Ensure it is running.",
+        ) from error
+
+    return {
+        "question": request.question,
+        "answer": answer,
+        "sources": sources,
+        "model": "qwen2.5:1.5b",
     }
