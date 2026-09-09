@@ -1,12 +1,11 @@
 from contextlib import asynccontextmanager
 from pathlib import Path
 from uuid import uuid4
-from app.vector_store import get_vector_store
-from app.chunking import chunk_document
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
+from app.chunking import chunk_document
 from app.database import (
     collection_exists,
     create_collection,
@@ -16,6 +15,7 @@ from app.database import (
     initialise_database,
 )
 from app.documents import SUPPORTED_EXTENSIONS, extract_document
+from app.vector_store import get_vector_store
 
 
 UPLOAD_DIRECTORY = Path("uploads")
@@ -38,6 +38,12 @@ app = FastAPI(
 
 class CollectionCreate(BaseModel):
     name: str = Field(min_length=1, max_length=80)
+
+
+class SearchRequest(BaseModel):
+    collection_id: str
+    question: str = Field(min_length=1, max_length=1000)
+    top_k: int = Field(default=5, ge=1, le=20)
 
 
 @app.get("/health")
@@ -105,14 +111,13 @@ async def upload_document(
             page_count=len(pages),
             character_count=character_count,
         )
-        
-        vector_store = get_vector_store()
-        vector_store.index_chunks(
+
+        get_vector_store().index_chunks(
             collection_id=collection_id,
             document_id=document["id"],
             document_name=original_name,
             chunks=chunks,
-            )
+        )
 
         return {
             **document,
@@ -122,3 +127,21 @@ async def upload_document(
     except Exception as error:
         stored_path.unlink(missing_ok=True)
         raise HTTPException(422, str(error)) from error
+
+
+@app.post("/search")
+def search_documents(request: SearchRequest):
+    if not collection_exists(request.collection_id):
+        raise HTTPException(404, "Collection not found")
+
+    results = get_vector_store().search(
+        collection_id=request.collection_id,
+        question=request.question,
+        top_k=request.top_k,
+    )
+
+    return {
+        "question": request.question,
+        "results": results,
+        "result_count": len(results),
+    }

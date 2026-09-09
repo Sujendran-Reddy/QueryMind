@@ -28,6 +28,44 @@ class VectorStore:
                     distance=models.Distance.COSINE,
                 ),
             )
+    def search(
+        self,
+        collection_id: str,
+        question: str,
+        top_k: int = 5,
+    ) -> list[dict]:
+        query_embedding = list(
+            self.embedding_model.embed([question])
+        )[0]
+
+        results = self.client.query_points(
+            collection_name=QDRANT_COLLECTION,
+            query=query_embedding.tolist(),
+            query_filter=models.Filter(
+                must=[
+                    models.FieldCondition(
+                        key="collection_id",
+                        match=models.MatchValue(
+                            value=collection_id
+                        ),
+                    )
+                ]
+            ),
+            limit=top_k,
+            with_payload=True,
+        ).points
+
+        return [
+            {
+                "chunk_id": result.payload["chunk_id"],
+                "document_id": result.payload["document_id"],
+                "document_name": result.payload["document_name"],
+                "page_number": result.payload["page_number"],
+                "text": result.payload["text"],
+                "score": round(result.score, 4),
+            }
+            for result in results
+        ]
 
     def index_chunks(
         self,

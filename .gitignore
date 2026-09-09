@@ -18,6 +18,7 @@ data/
 uploads/
 
 # Editors and OS
+.vs/
 .vscode/
 .idea/
 .DS_Store
